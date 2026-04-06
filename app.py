@@ -1,408 +1,477 @@
-# ============================================================
-#  app.py  –  Cancer Risk Classifier  |  Streamlit GUI
-#  Usage:  streamlit run app.py
-#  Requires: model.pkl downloaded from Google Colab
-#            Place model.pkl in the SAME folder as app.py
-# ============================================================
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
-import os
+import streamlit as st
 import pickle
 import numpy as np
 import pandas as pd
-from sklearn.impute import KNNImputer
-from sklearn.preprocessing import RobustScaler
-import streamlit as st
 
-# ── PAGE CONFIG ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Cancer Risk Classifier",
-    page_icon="🧬",
+    page_title="Cancer Risk Screener",
+    page_icon="🔬",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-# ── CUSTOM CSS ──────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Main background */
-    .stApp { background-color: #0f172a; color: #e2e8f0; }
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap');
 
-    /* Header */
-    .main-header {
-        background: linear-gradient(135deg, #1e3a5f 0%, #0f2137 100%);
-        border: 1px solid #1e40af;
-        border-radius: 12px;
-        padding: 24px 28px;
-        margin-bottom: 28px;
-    }
-    .main-header h1 { color: #ffffff; font-size: 1.8rem; margin: 0; }
-    .main-header p  { color: #94a3b8; margin: 6px 0 0; font-size: 0.95rem; }
+/* ── Base reset ────────────────────────────────────────────────────────── */
+html, body, [class*="css"], [data-testid="stApp"],
+[data-testid="stAppViewContainer"], .main {
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    background-color: #f5f3ef !important;
+    color: #1c1c2e !important;
+}
+[data-testid="stHeader"]         { display: none !important; }
+[data-testid="stToolbar"]        { display: none !important; }
+[data-testid="stSidebar"]        { display: none !important; }
+[data-testid="collapsedControl"] { display: none !important; }
+.block-container { padding: 0 3rem !important; max-width: 100% !important; }
 
-    /* Section headings */
-    .section-title {
-        color: #60a5fa;
-        font-size: 0.75rem;
-        font-weight: 700;
-        letter-spacing: 2px;
-        text-transform: uppercase;
-        border-bottom: 1px solid #1e293b;
-        padding-bottom: 6px;
-        margin-bottom: 4px;
-    }
+/* ── Hero banner ────────────────────────────────────────────────────────── */
+.hero {
+    background: linear-gradient(120deg, #1c1c2e 0%, #2d4a47 60%, #1c3a36 100%);
+    padding: 3.2rem max(5vw, 2rem) 3rem;
+    position: relative;
+    overflow: hidden;
+}
+.hero::before {
+    content: '';
+    position: absolute; inset: 0;
+    background:
+        radial-gradient(ellipse 60% 80% at 80% 50%, rgba(45,122,111,0.25) 0%, transparent 70%),
+        radial-gradient(ellipse 40% 60% at 10% 80%, rgba(255,180,100,0.1) 0%, transparent 60%);
+    pointer-events: none;
+}
+.hero-inner {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+}
+.hero-brand {
+    display: flex; align-items: center; gap: 0.55rem;
+    margin-bottom: 1rem;
+}
+.hero-dot {
+    width: 9px; height: 9px;
+    background: #4ecdc4;
+    border-radius: 50%;
+    box-shadow: 0 0 0 3px rgba(78,205,196,0.25);
+}
+.hero-brand-name {
+    font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: #4ecdc4;
+}
+.hero-title {
+    font-family: 'Playfair Display', serif;
+    font-size: clamp(2rem, 3.5vw, 3rem);
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.15;
+    margin-bottom: 0.6rem;
+}
+.hero-title em { font-style: italic; color: #8de8de; }
+.hero-sub {
+    font-size: 0.92rem; color: rgba(255,255,255,0.55);
+    line-height: 1.65; max-width: 520px;
+}
+.hero-badge {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 99px;
+    padding: 0.45rem 1.1rem;
+    font-size: 0.78rem; font-weight: 600; color: #c8f5f2;
+    white-space: nowrap; align-self: flex-start; margin-top: 0.4rem;
+}
+.hero-badge-dot { width: 6px; height: 6px; background: #4ecdc4; border-radius: 50%; }
 
-    /* Result cards */
-    .result-high {
-        background: linear-gradient(135deg, rgba(239,68,68,0.12), rgba(239,68,68,0.04));
-        border: 1px solid rgba(239,68,68,0.4);
-        border-radius: 14px;
-        padding: 28px 32px;
-        text-align: center;
-    }
-    .result-low {
-        background: linear-gradient(135deg, rgba(16,185,129,0.12), rgba(16,185,129,0.04));
-        border: 1px solid rgba(16,185,129,0.4);
-        border-radius: 14px;
-        padding: 28px 32px;
-        text-align: center;
-    }
-    .result-high h2 { color: #f87171; font-size: 2rem; margin: 0; }
-    .result-low  h2 { color: #34d399; font-size: 2rem; margin: 0; }
-    .result-high p, .result-low p { color: #cbd5e1; margin: 8px 0 0; }
+/* ── Main content wrapper ────────────────────────────────────────────────── */
+.content-wrap {
+    padding: 2.8rem max(5vw, 1.5rem) 4rem;
+    max-width: 1400px;
+    margin: 0 auto;
+}
 
-    /* Metric boxes */
-    .metric-box {
-        background: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 16px 20px;
-        text-align: center;
-    }
-    .metric-box .m-label { font-size: 0.72rem; color: #64748b; text-transform: uppercase; letter-spacing: 1px; }
-    .metric-box .m-value { font-size: 1.4rem; font-weight: 700; color: #e2e8f0; margin-top: 4px; }
+/* ── Section label ────────────────────────────────────────────────────────── */
+.section-label {
+    font-size: 0.68rem; font-weight: 700;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    color: #a09e9e; margin-bottom: 0.9rem; margin-top: 2rem;
+    display: flex; align-items: center; gap: 0.6rem;
+}
+.section-label::after {
+    content: ''; flex: 1; height: 1px; background: #e4e0d8;
+}
 
-    /* Disclaimer */
-    .disclaimer {
-        background: #1e293b;
-        border-left: 3px solid #475569;
-        border-radius: 6px;
-        padding: 12px 16px;
-        font-size: 0.8rem;
-        color: #64748b;
-        margin-top: 16px;
-        line-height: 1.6;
-    }
+/* ── Input cards ──────────────────────────────────────────────────────────── */
+.input-card {
+    background: #ffffff;
+    border: 1px solid #e8e4dc;
+    border-radius: 18px;
+    padding: 1.8rem 2.2rem 1.6rem;
+    box-shadow: 0 2px 16px rgba(28,28,46,0.05);
+    margin-bottom: 1.2rem;
+}
+.input-card-title {
+    font-size: 0.72rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: #b0aeae; margin-bottom: 1.1rem;
+}
 
-    /* Streamlit widget label overrides */
-    label { color: #94a3b8 !important; font-size: 0.88rem !important; }
-    .stNumberInput > div > div > input { background: #1e293b !important; color: #e2e8f0 !important; border-color: #334155 !important; }
-    .stButton > button {
-        background: linear-gradient(135deg, #1d4ed8, #3b82f6);
-        color: white; border: none; font-weight: 600;
-        border-radius: 8px; padding: 10px 28px;
-        transition: all 0.2s;
-    }
-    .stButton > button:hover { background: linear-gradient(135deg, #2563eb, #60a5fa); }
+/* ── Widget overrides ─────────────────────────────────────────────────────── */
+[data-testid="stWidgetLabel"] p, label,
+.stSelectbox label, .stNumberInput label {
+    color: #3d3d55 !important;
+    font-size: 0.83rem !important;
+    font-weight: 500 !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+input[type="number"] {
+    background: #faf9f7 !important;
+    border: 1.5px solid #e4e0d8 !important;
+    border-radius: 10px !important;
+    color: #1c1c2e !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-size: 0.9rem !important;
+    padding: 0.5rem 0.8rem !important;
+}
+input[type="number"]:focus {
+    border-color: #2d7a6f !important;
+    box-shadow: 0 0 0 3px rgba(45,122,111,0.12) !important;
+    outline: none !important;
+}
+.stSelectbox > div > div {
+    background: #faf9f7 !important;
+    border: 1.5px solid #e4e0d8 !important;
+    border-radius: 10px !important;
+    color: #1c1c2e !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+}
+
+/* ── Predict button ───────────────────────────────────────────────────────── */
+.stButton > button {
+    background: linear-gradient(135deg, #1c1c2e 0%, #2d4a47 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 14px !important;
+    font-family: 'Plus Jakarta Sans', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1rem !important;
+    padding: 0.85rem 2rem !important;
+    letter-spacing: 0.02em !important;
+    width: 100% !important;
+    margin-top: 0.5rem !important;
+    transition: all 0.2s !important;
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, #2d4a47 0%, #1c6b61 100%) !important;
+    box-shadow: 0 8px 24px rgba(45,122,111,0.3) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* ── Result section ───────────────────────────────────────────────────────── */
+.result-high {
+    background: linear-gradient(135deg, #fff5f5 0%, #ffeded 100%);
+    border: 2px solid #fca5a5;
+    border-radius: 20px;
+    padding: 2.8rem 2.8rem;
+    display: flex; align-items: center; gap: 2rem;
+    box-shadow: 0 8px 32px rgba(239,68,68,0.1);
+    margin-bottom: 1.4rem;
+}
+.result-low {
+    background: linear-gradient(135deg, #f0fdf8 0%, #e5faf3 100%);
+    border: 2px solid #6ee7c0;
+    border-radius: 20px;
+    padding: 2.8rem 2.8rem;
+    display: flex; align-items: center; gap: 2rem;
+    box-shadow: 0 8px 32px rgba(16,185,129,0.1);
+    margin-bottom: 1.4rem;
+}
+.result-icon-wrap {
+    width: 80px; height: 80px; flex-shrink: 0;
+    border-radius: 50%; display: flex;
+    align-items: center; justify-content: center;
+    font-size: 2.2rem;
+}
+.result-high .result-icon-wrap { background: rgba(239,68,68,0.1); }
+.result-low  .result-icon-wrap { background: rgba(16,185,129,0.1); }
+.result-text {}
+.result-eyebrow {
+    font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.12em; text-transform: uppercase;
+    margin-bottom: 0.3rem;
+}
+.result-high .result-eyebrow { color: #dc2626; }
+.result-low  .result-eyebrow { color: #059669; }
+.result-headline {
+    font-family: 'Playfair Display', serif;
+    font-size: 2.2rem; font-weight: 700; line-height: 1.1;
+    margin-bottom: 0.5rem;
+}
+.result-high .result-headline { color: #991b1b; }
+.result-low  .result-headline { color: #065f46; }
+.result-desc { font-size: 0.88rem; color: #6b7280; line-height: 1.6; max-width: 440px; }
+
+/* ── Probability card ─────────────────────────────────────────────────────── */
+.prob-card {
+    background: #ffffff;
+    border: 1px solid #e8e4dc;
+    border-radius: 18px;
+    padding: 2rem 2.4rem;
+    box-shadow: 0 2px 16px rgba(28,28,46,0.05);
+    margin-bottom: 1.2rem;
+}
+.prob-card-title {
+    font-size: 0.7rem; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: #b0aeae; margin-bottom: 1.2rem;
+}
+.pbar-wrap { margin-bottom: 1.1rem; }
+.pbar-row {
+    display: flex; justify-content: space-between;
+    align-items: center; margin-bottom: 6px;
+}
+.pbar-label { font-size: 0.86rem; font-weight: 500; color: #3d3d55; }
+.pbar-value { font-size: 0.92rem; font-weight: 700; color: #1c1c2e; }
+.pbar-bg { background: #f0ede8; border-radius: 99px; height: 8px; overflow: hidden; }
+.pbar-fill { height: 100%; border-radius: 99px; }
+
+/* ── Disclaimer ───────────────────────────────────────────────────────────── */
+.disclaimer {
+    background: #fffceb;
+    border: 1px solid #fde68a;
+    border-radius: 12px;
+    padding: 1.1rem 1.6rem;
+    font-size: 0.8rem; color: #92400e; line-height: 1.6;
+}
+
+/* ── Empty state ──────────────────────────────────────────────────────────── */
+.empty-state {
+    background: #ffffff;
+    border: 1.5px dashed #d8d4cc;
+    border-radius: 20px;
+    padding: 5rem 3rem;
+    text-align: center;
+}
+.empty-icon  { font-size: 3rem; margin-bottom: 1rem; opacity: 0.35; }
+.empty-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 1.3rem; color: #9a98a8; margin-bottom: 0.5rem;
+}
+.empty-sub { font-size: 0.84rem; color: #b8b5c5; line-height: 1.6; }
+
+/* ── Column gap fix ───────────────────────────────────────────────────────── */
+[data-testid="stHorizontalBlock"] { gap: 1rem !important; }
+div[data-testid="column"] > div   { padding: 0 !important; }
+
+/* scrollbar */
+::-webkit-scrollbar       { width: 5px; }
+::-webkit-scrollbar-track { background: #f5f3ef; }
+::-webkit-scrollbar-thumb { background: #ccc8c0; border-radius: 99px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── LOAD MODEL (plain Colab pickle) ─────────────────────────
-# Your Colab saved ONLY the model:  pickle.dump(model, open("model.pkl","wb"))
-# So we load it directly, then rebuild the scaler & imputer
-# from cancer_reg.csv (same preprocessing your notebook used).
 
-MODEL_PATH   = os.path.join(os.path.dirname(__file__), "model.pkl")
-DATASET_PATH = os.path.join(os.path.dirname(__file__), "cancer_reg.csv")
-
-MEDIAN_VAL   = 178.1   # fallback if CSV not present
-
+# ── Load pickles ───────────────────────────────────────────────────────────────
 @st.cache_resource
-def load_everything():
-    # ── 1. Load raw model from Colab pickle ──
-    with open(MODEL_PATH, "rb") as f:
-        content = pickle.load(f)
-
-    # Handle both plain model and bundle dict (just in case)
-    if isinstance(content, dict) and "model" in content:
-        model        = content["model"]
-        scaler       = content.get("scaler")
-        imputer      = content.get("imputer")
-        feature_cols = content.get("feature_cols")
-        median_val   = content.get("median_val", MEDIAN_VAL)
-        # If bundle is complete, return immediately
-        if all(v is not None for v in [scaler, imputer, feature_cols]):
-            return model, scaler, imputer, feature_cols, median_val
-    else:
-        model = content
-
-    # ── 2. Rebuild scaler + imputer from cancer_reg.csv ──
-    df = pd.read_csv(DATASET_PATH)
-
-    # Drop non-numeric / target columns — NO cfr added here.
-    # The Colab model was trained on the original 30 columns only.
-    drop_cols    = ["Geography", "binnedInc", "target_deathrate"]
-    feature_cols = [c for c in df.columns
-                    if c not in drop_cols and df[c].dtype != object]
-
-    median_val = df["target_deathrate"].median()
-
-    X = df[feature_cols].values
-
-    imputer = KNNImputer(n_neighbors=5)
-    X_imp   = imputer.fit_transform(X)
-
-    scaler  = RobustScaler()
-    scaler.fit(X_imp)
-
-    return model, scaler, imputer, feature_cols, median_val
-
-# ── Try loading ──────────────────────────────────────────────
-model_loaded   = False
-missing_csv    = False
-load_error_msg = ""
-
-if not os.path.exists(MODEL_PATH):
-    load_error_msg = f"model.pkl not found at: `{MODEL_PATH}`"
-elif not os.path.exists(DATASET_PATH):
-    # Load only the model; skip scaler rebuild — use identity transforms
+def load_artifacts():
     try:
-        with open(MODEL_PATH, "rb") as f:
-            raw = pickle.load(f)
-        model        = raw["model"] if isinstance(raw, dict) and "model" in raw else raw
-        scaler       = None
-        imputer      = None
-        feature_cols = list(DEFAULTS.keys())   # defined below
-        model_loaded = True
-        missing_csv  = True
-    except Exception as e:
-        load_error_msg = str(e)
-else:
-    try:
-        model, scaler, imputer, feature_cols, MEDIAN_VAL = load_everything()
-        model_loaded = True
-    except Exception as e:
-        load_error_msg = str(e)
+        with open("models.pkl", "rb") as f:
+            models = pickle.load(f)
+        with open("scaler.pkl", "rb") as f:
+            scaler_bundle = pickle.load(f)
+        return models, scaler_bundle, None
+    except FileNotFoundError as e:
+        return None, None, str(e)
 
-# ── HEADER ──────────────────────────────────────────────────
+models, scaler_bundle, err = load_artifacts()
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HERO
+# ══════════════════════════════════════════════════════════════════════════════
 st.markdown("""
-<div class="main-header">
-  <h1>🧬 Cancer Risk Classifier</h1>
-  <p>Predicts whether a county's cancer death-rate is <strong>High Risk</strong> or <strong>Low Risk</strong>
-     based on demographic, socioeconomic, and healthcare indicators.<br>
-     Dataset: <em>cancer_reg.csv</em> (Kaggle) · Model: HistGradientBoosting</p>
+<div class="hero">
+  <div class="hero-inner">
+    <div>
+      <div class="hero-brand">
+        <div class="hero-dot"></div>
+        <div class="hero-brand-name">OncoScreen AI</div>
+      </div>
+      <div class="hero-title">Cancer Risk<br><em>Assessment Tool</em></div>
+      <div class="hero-sub">
+        Complete the patient profile below to receive an instant AI-powered
+        cancer risk evaluation based on clinical and lifestyle indicators.
+      </div>
+    </div>
+    <div class="hero-badge">
+      <div class="hero-badge-dot"></div>
+      ⭐ Random Forest · Best Model
+    </div>
+  </div>
 </div>
 """, unsafe_allow_html=True)
 
-if not model_loaded:
-    st.error(f"⚠️  Could not load model. {load_error_msg}\n\n"
-             "**Fix:** Place `model.pkl` (downloaded from Colab) in the **same folder** as `app.py`, "
-             "and also place `cancer_reg.csv` there for scaling.")
+# ══════════════════════════════════════════════════════════════════════════════
+# CONTENT
+# ══════════════════════════════════════════════════════════════════════════════
+st.markdown('<div class="content-wrap">', unsafe_allow_html=True)
+
+if err:
+    st.error(f"**Model files not found:** `{err}`\n\nPlace `models.pkl` and `scaler.pkl` in the same folder as `app.py`.")
     st.stop()
 
-# ── SIDEBAR ──────────────────────────────────────────────────
-with st.sidebar:
-    st.header("⚙️ Options")
-    load_example = st.button("📋 Load Example Values")
-    st.markdown("---")
-    st.caption(f"**Median threshold:** {MEDIAN_VAL:.2f} deaths / 100k")
-    st.caption(f"**Features:** {len(feature_cols)}")
-    if missing_csv:
-        st.warning("⚠️ `cancer_reg.csv` not found — scaler/imputer skipped. Predictions may differ slightly.")
+feature_names = scaler_bundle['feature_names']
+MODEL_NAME    = "Random Forest"
+selected      = models[MODEL_NAME]
 
-# Example defaults (median US county)
-DEFAULTS = {
-    "avganncount":              1397.0,
-    "avgdeathsperyear":          469.0,
-    "incidencerate":             489.8,
-    "medincome":               45207.0,
-    "popest2015":             164171.0,
-    "povertypercent":             19.6,
-    "studypercap":               152.0,
-    "binnedinc":                   0.0,
-    "medianage":                  39.5,
-    "medianagemale":              37.8,
-    "medianagefemale":            41.2,
-    "geography":                   0.0,
-    "percentmarried":             50.2,
-    "pctnohs18_24":               17.4,
-    "pcths18_24":                 34.8,
-    "pctsomecol18_24":            38.2,
-    "pctbachdeg18_24":             5.3,
-    "pcths25over":                33.7,
-    "pctbachdeg25over":           14.5,
-    "pctemployed16_over":         55.8,
-    "pctunemployed16_over":        8.4,
-    "pctprivatecoverage":         60.4,
-    "pctprivatecoveragealone":    47.1,
-    "pctempprivcoverage":         41.2,
-    "pctpubliccoverage":          35.7,
-    "pctpubliccoveragealone":     18.6,
-    "pctwhite":                   82.6,
-    "pctblack":                    8.2,
-    "pctasian":                    1.1,
-    "pctotherrace":                1.8,
-    "pctmarriedhouseholds":       50.8,
-    "birthrate":                   5.5,
-    "percapitainc":            23694.0,
-}
+vals = {}
 
-def get_default(col):
-    return DEFAULTS.get(col.lower(), 0.0)
+# ── Row 1: Demographics ────────────────────────────────────────────────────
+st.markdown('<div class="section-label">Demographics</div>', unsafe_allow_html=True)
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    vals['Age'] = st.number_input("Age", min_value=1, max_value=120, value=45, step=1)
+with c2:
+    gender_map = {"Male": 1, "Female": 0}
+    vals['Gender'] = gender_map[st.selectbox("Gender", list(gender_map.keys()))]
+with c3:
+    vals['BMI'] = st.number_input("BMI", min_value=10.0, max_value=60.0, value=25.0, step=0.1, format="%.1f")
+with c4:
+    vals['PhysicalActivity'] = st.number_input("Physical Activity (hrs/wk)", min_value=0.0, max_value=20.0, value=3.0, step=0.5, format="%.1f")
 
-# ── INPUT FORM ──────────────────────────────────────────────
-st.markdown("### 📝 Enter County Data")
+# ── Row 2: Risk Factors ────────────────────────────────────────────────────
+st.markdown('<div class="section-label">Risk Factors</div>', unsafe_allow_html=True)
+c5, c6, c7, c8 = st.columns(4)
+with c5:
+    smoking_map = {"Non-Smoker": 0, "Smoker": 1}
+    vals['Smoking'] = smoking_map[st.selectbox("Smoking Status", list(smoking_map.keys()))]
+with c6:
+    vals['AlcoholIntake'] = st.number_input("Alcohol Intake (units/wk)", min_value=0.0, max_value=40.0, value=2.0, step=0.5, format="%.1f")
+with c7:
+    genetic_map = {"Low": 0, "Medium": 1, "High": 2}
+    vals['GeneticRisk'] = genetic_map[st.selectbox("Genetic Risk", list(genetic_map.keys()), index=1)]
+with c8:
+    history_map = {"No": 0, "Yes": 1}
+    vals['CancerHistory'] = history_map[st.selectbox("Family Cancer History", list(history_map.keys()))]
 
-inputs = {}
+# Extra features if any
+shown  = {'Age','Gender','BMI','Smoking','GeneticRisk','CancerHistory','PhysicalActivity','AlcoholIntake'}
+extras = [f for f in feature_names if f not in shown]
+if extras:
+    st.markdown('<div class="section-label">Additional</div>', unsafe_allow_html=True)
+    ecols = st.columns(min(len(extras), 4))
+    for i, feat in enumerate(extras):
+        with ecols[i % 4]:
+            vals[feat] = st.number_input(feat, value=0.0, format="%.2f")
 
-# Group features into logical sections for readability
-sections = {
-    "📊 Incidence & Mortality": [
-        "avganncount", "avgdeathsperyear", "incidencerate"
-    ],
-    "👥 Demographics": [
-        "popest2015", "medianage", "medianagemale", "medianagefemale",
-        "pctwhite", "pctblack", "pctasian", "pctotherrace",
-        "birthrate", "percentmarried", "pctmarriedhouseholds"
-    ],
-    "💰 Socioeconomic": [
-        "medincome", "percapitainc", "povertypercent", "studypercap"
-    ],
-    "🎓 Education": [
-        "pctnohs18_24", "pcths18_24", "pctsomecol18_24", "pctbachdeg18_24",
-        "pcths25over", "pctbachdeg25over"
-    ],
-    "💼 Employment": [
-        "pctemployed16_over", "pctunemployed16_over"
-    ],
-    "🏥 Healthcare Coverage": [
-        "pctprivatecoverage", "pctprivatecoveragealone", "pctempprivcoverage",
-        "pctpubliccoverage", "pctpubliccoveragealone"
-    ],
-}
+# ── Predict button ─────────────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+_, btn_col, _ = st.columns([1, 2, 1])
+with btn_col:
+    predict_btn = st.button("Run Risk Assessment →", use_container_width=True, type="primary")
 
-# Remaining features not in any group
-grouped = [f for grp in sections.values() for f in grp]
-remaining = [c for c in feature_cols if c.lower() not in grouped]
+# ── Divider ────────────────────────────────────────────────────────────────
+st.markdown("<br>", unsafe_allow_html=True)
+st.markdown('<div class="section-label">Results</div>', unsafe_allow_html=True)
 
-with st.form("prediction_form"):
+# ── Results ────────────────────────────────────────────────────────────────
+if predict_btn:
+    X_in = pd.DataFrame([[vals.get(f, 0) for f in feature_names]], columns=feature_names)
 
-    for section_name, fields in sections.items():
-        st.markdown(f'<div class="section-title">{section_name}</div>', unsafe_allow_html=True)
-        visible = [c for c in feature_cols if c.lower() in [f.lower() for f in fields]]
+    if selected['needs_scaling']:
+        X_in = pd.DataFrame(
+            scaler_bundle['scaler'].transform(X_in),
+            columns=feature_names
+        )
 
-        if visible:
-            cols = st.columns(3)
-            for i, col_name in enumerate(visible):
-                default_val = get_default(col_name)
-                if load_example:
-                    default_val = get_default(col_name)
-                with cols[i % 3]:
-                    inputs[col_name] = st.number_input(
-                        label=col_name,
-                        value=float(default_val),
-                        format="%.2f",
-                        key=col_name,
-                    )
+    pred   = selected['model'].predict(X_in)[0]
+    probs  = selected['model'].predict_proba(X_in)[0]
+    p_high = probs[1]
+    p_low  = probs[0]
 
-    # Any leftover features
-    if remaining:
-        st.markdown('<div class="section-title">🔧 Other Features</div>', unsafe_allow_html=True)
-        cols = st.columns(3)
-        for i, col_name in enumerate(remaining):
-            with cols[i % 3]:
-                inputs[col_name] = st.number_input(
-                    label=col_name,
-                    value=float(get_default(col_name)),
-                    format="%.2f",
-                    key=col_name,
-                )
-
-    st.markdown("---")
-    submitted = st.form_submit_button("⚡  Predict Risk", use_container_width=True)
-
-# ── PREDICTION ──────────────────────────────────────────────
-if submitted:
-    # Build feature vector in the exact order the model was trained on
-    row = np.array([[inputs.get(c, get_default(c)) for c in feature_cols]], dtype=float)
-
-    # Apply imputer → scaler → model (skip if not available)
-    if imputer is not None:
-        row = imputer.transform(row)
-    if scaler is not None:
-        row = scaler.transform(row)
-    prediction = model.predict(row)[0]
-
-    # Probability if model supports it
-    try:
-        proba = model.predict_proba(row)[0]
-        confidence = float(max(proba)) * 100
-        risk_score = float(proba[1]) * 100
-    except AttributeError:
-        confidence = None
-        risk_score = None
-
-    # Derived CFR — computed from inputs for display only (not a model feature)
-    cfr_val = inputs.get("avgdeathsperyear", 0) / (inputs.get("avganncount", 1) + 1)
-
-    st.markdown("---")
-    st.markdown("### 🎯 Prediction Result")
-
-    # Result card
-    if prediction == 1:
+    # Result banner — full width
+    if pred == 1:
         st.markdown(f"""
         <div class="result-high">
-            <h2>⚠️ HIGH RISK</h2>
-            <p>This county profile indicates a cancer death-rate <strong>above</strong> the national median ({MEDIAN_VAL:.1f} per 100k).</p>
-        </div>
-        """, unsafe_allow_html=True)
+            <div class="result-icon-wrap">⚠️</div>
+            <div class="result-text">
+                <div class="result-eyebrow">Assessment Result</div>
+                <div class="result-headline">High Risk</div>
+                <div class="result-desc">
+                    This patient profile shows elevated indicators associated with cancer risk.
+                    Further clinical evaluation and specialist referral is strongly advised.
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
     else:
         st.markdown(f"""
         <div class="result-low">
-            <h2>✅ LOW RISK</h2>
-            <p>This county profile indicates a cancer death-rate <strong>below</strong> the national median ({MEDIAN_VAL:.1f} per 100k).</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Metric row
-    st.markdown("<br>", unsafe_allow_html=True)
-    m1, m2, m3, m4 = st.columns(4)
-
-    with m1:
-        st.markdown(f"""
-        <div class="metric-box">
-            <div class="m-label">Classification</div>
-            <div class="m-value" style="color:{'#f87171' if prediction==1 else '#34d399'}">
-                {'High Risk' if prediction==1 else 'Low Risk'}
+            <div class="result-icon-wrap">✅</div>
+            <div class="result-text">
+                <div class="result-eyebrow">Assessment Result</div>
+                <div class="result-headline">Low Risk</div>
+                <div class="result-desc">
+                    No significant cancer risk indicators detected in this patient profile.
+                    Routine check-ups and a healthy lifestyle are recommended.
+                </div>
             </div>
         </div>""", unsafe_allow_html=True)
 
-    with m2:
-        val = f"{risk_score:.1f}%" if risk_score is not None else "N/A"
+    # Probability bars — two columns
+    pb1, pb2 = st.columns(2)
+    with pb1:
         st.markdown(f"""
-        <div class="metric-box">
-            <div class="m-label">Risk Score</div>
-            <div class="m-value">{val}</div>
+        <div class="prob-card">
+            <div class="prob-card-title">Low Risk Probability</div>
+            <div class="pbar-wrap">
+                <div class="pbar-row">
+                    <span class="pbar-label">Low Risk</span>
+                    <span class="pbar-value">{p_low:.1%}</span>
+                </div>
+                <div class="pbar-bg">
+                    <div class="pbar-fill" style="width:{p_low*100:.1f}%; background: linear-gradient(90deg,#10b981,#34d399);"></div>
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+    with pb2:
+        st.markdown(f"""
+        <div class="prob-card">
+            <div class="prob-card-title">High Risk Probability</div>
+            <div class="pbar-wrap">
+                <div class="pbar-row">
+                    <span class="pbar-label">High Risk</span>
+                    <span class="pbar-value">{p_high:.1%}</span>
+                </div>
+                <div class="pbar-bg">
+                    <div class="pbar-fill" style="width:{p_high*100:.1f}%; background: linear-gradient(90deg,#ef4444,#f87171);"></div>
+                </div>
+            </div>
         </div>""", unsafe_allow_html=True)
 
-    with m3:
-        val = f"{confidence:.1f}%" if confidence is not None else "N/A"
-        st.markdown(f"""
-        <div class="metric-box">
-            <div class="m-label">Confidence</div>
-            <div class="m-value">{val}</div>
-        </div>""", unsafe_allow_html=True)
-
-    with m4:
-        st.markdown(f"""
-        <div class="metric-box">
-            <div class="m-label">Case Fatality Rate</div>
-            <div class="m-value">{cfr_val:.3f}</div>
-        </div>""", unsafe_allow_html=True)
-
-    # Disclaimer
     st.markdown("""
     <div class="disclaimer">
-        ⚠️ <strong>Disclaimer:</strong> This prediction is generated by a machine learning model trained on the
-        <em>cancer_reg</em> dataset (Kaggle). It is intended for <strong>educational and research purposes only</strong>
-        and should not be used for any clinical or medical decision-making.
-        Consult qualified healthcare professionals for guidance.
-    </div>
-    """, unsafe_allow_html=True)
+        ⚠️ <strong>Educational use only.</strong> This tool does not constitute medical advice and
+        should not replace professional clinical judgement. Always consult a qualified healthcare
+        professional for diagnosis and treatment decisions.
+    </div>""", unsafe_allow_html=True)
+
+else:
+    st.markdown("""
+    <div class="empty-state">
+        <div class="empty-icon">🔬</div>
+        <div class="empty-title">Awaiting Assessment</div>
+        <div class="empty-sub">
+            Complete the patient profile above and click<br>
+            <strong>Run Risk Assessment</strong> to see results here.
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
